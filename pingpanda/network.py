@@ -17,12 +17,17 @@ DEFAULT_TIMEOUT_SECONDS = 10.0
 
 
 # Function to resolve hostname to IP:Port
+
 def resolve_ip_and_port(url):
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
         scheme = parsed.scheme
-        port = parsed.port or (443 if scheme == "https" else 8080)
+
+        port = parsed.port if parsed.port is not None else (
+            80 if scheme == "http" else 443
+        )
+
         ip_address = socket.gethostbyname(hostname)
         return f"{ip_address}:{port}"
     except Exception:
