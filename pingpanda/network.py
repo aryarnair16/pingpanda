@@ -52,7 +52,7 @@ async def check_url_status(session, url_id, url):
             follow_redirects=True,
             timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS, read=None),
         )
-    except httpx.ConnectError:
+    except httpx.RequestError:
         elapsed = time.perf_counter() - started
         return UrlResult(url_id, url, None, elapsed, None, "IP:Port Not Found", None)
 
