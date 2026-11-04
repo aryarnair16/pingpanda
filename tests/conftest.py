@@ -32,13 +32,29 @@ def checker():
 
 @pytest.fixture
 def fake_dns(monkeypatch):
-    """Resolve every host name to a fixed IP address."""
+    """Resolve test hostnames to a fixed IP address."""
+    original_getaddrinfo = socket.getaddrinfo
 
-    def fake_gethostbyname(hostname):
-        return FAKE_IP
+    def fake_getaddrinfo(
+        hostname, port, family=0, type=0, proto=0, flags=0
+    ):
+        if hostname in ("localhost", "127.0.0.1", "::1"):
+            return original_getaddrinfo(
+                hostname, port, family, type, proto, flags
+            )
 
-    monkeypatch.setattr(socket, "gethostbyname", fake_gethostbyname)
-    return fake_gethostbyname
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                (FAKE_IP, port),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    return fake_getaddrinfo
 
 
 @pytest.fixture

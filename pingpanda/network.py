@@ -18,19 +18,41 @@ DEFAULT_MAX_CONCURRENT = 10
 
 
 # Function to resolve hostname to IP:Port
-def resolve_ip_and_port(url):
+async def resolve_ip_and_port(url):
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
         scheme = parsed.scheme
 
+        if not hostname:
+            return "IP:Port Not Found"
+
         port = parsed.port if parsed.port is not None else (
             80 if scheme == "http" else 443
         )
 
-        ip_address = socket.gethostbyname(hostname)
+        loop = asyncio.get_running_loop()
+
+        addresses = await asyncio.wait_for(
+            loop.getaddrinfo(
+                hostname,
+                port,
+                type=socket.SOCK_STREAM,
+            ),
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+
+        if not addresses:
+            return "IP:Port Not Found"
+
+        ip_address = addresses[0][4][0]
+
+        if ":" in ip_address:
+            return f"[{ip_address}]:{port}"
+
         return f"{ip_address}:{port}"
-    except Exception:
+
+    except (OSError, ValueError, asyncio.TimeoutError):
         return "IP:Port Not Found"
 
 
@@ -61,8 +83,13 @@ async def check_url_status(session, url_id, url):
         return UrlResult(url_id, url, None, elapsed, None, "IP:Port Not Found", None)
 
     final_url = str(response.url)
-    original_ip_port = resolve_ip_and_port(url)
-    redirect_ip_port = resolve_ip_and_port(final_url) if final_url != url else None
+    original_ip_port = await resolve_ip_and_port(url)
+
+    redirect_ip_port = (
+    await resolve_ip_and_port(final_url)
+    if final_url != url
+    else None
+    )
     redirect_to = final_url if final_url != url else None
 
     elapsed = time.perf_counter() - started

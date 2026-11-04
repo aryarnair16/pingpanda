@@ -18,10 +18,10 @@ KNOWN_DEFECT = "known defect - see the FOSSSoC-S1 issue tracker"
         ("http://example.com:8000/", 8000),
     ],
 )
-def test_resolve_ip_and_port_uses_correct_port(
+async def test_resolve_ip_and_port_uses_correct_port(
     checker, fake_dns, url, expected_port
 ):
-    result = checker.network.resolve_ip_and_port(url)
+    result = await checker.network.resolve_ip_and_port(url)
 
     assert result.endswith(f":{expected_port}")
 
@@ -91,7 +91,22 @@ async def test_redirect_target_is_reported(checker, fake_dns):
 
 async def test_redirect_ip_belongs_to_the_redirect_target(checker, monkeypatch):
     hosts = {"example.com": "10.0.0.1", "target.test": "10.0.0.2"}
-    monkeypatch.setattr(socket, "gethostbyname", lambda host: hosts.get(host, "10.0.0.3"))
+    def fake_getaddrinfo(
+        hostname, port, family=0, type=0, proto=0, flags=0
+    ):
+        ip_address = hosts.get(hostname, "10.0.0.3")
+
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                (ip_address, port),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
     def handler(request):
         if request.url.host == "example.com":
@@ -170,3 +185,44 @@ async def test_redirect_chain_respects_overall_timeout(
 
     assert duration < 0.8, "the redirect chain exceeded the overall timeout"
     assert result.status is None
+
+async def test_resolve_ip_and_port_supports_ipv6(checker, monkeypatch):
+    def fake_getaddrinfo(
+        hostname, port, family=0, type=0, proto=0, flags=0
+    ):
+        return [
+            (
+                socket.AF_INET6,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("2001:db8::1", port, 0, 0),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    result = await checker.network.resolve_ip_and_port(
+        "https://example.com"
+    )
+
+    assert result == "[2001:db8::1]:443"
+
+async def test_dns_lookup_times_out(checker, monkeypatch):
+    monkeypatch.setattr(
+        checker.network, "DEFAULT_TIMEOUT_SECONDS", 0.01
+    )
+
+    loop = asyncio.get_running_loop()
+
+    async def slow_getaddrinfo(*args, **kwargs):
+        await asyncio.sleep(0.1)
+        return []
+
+    monkeypatch.setattr(loop, "getaddrinfo", slow_getaddrinfo)
+
+    result = await checker.network.resolve_ip_and_port(
+        "https://example.com"
+    )
+
+    assert result == "IP:Port Not Found"
