@@ -44,3 +44,34 @@ async def test_every_url_keeps_its_own_redirect_target(checker, fake_dns):
         )
 
     assert sorted(result.redirect_to for result in results) == sorted(targets.values())
+
+async def test_check_all_respects_max_concurrent(
+    checker, fake_dns, mock_transport
+):
+    urls = [f"https://site{i}.test" for i in range(8)]
+    active_requests = 0
+    peak_requests = 0
+
+    async def handler(request):
+        nonlocal active_requests, peak_requests
+
+        active_requests += 1
+        peak_requests = max(peak_requests, active_requests)
+
+        await asyncio.sleep(0.02)
+
+        active_requests -= 1
+        return httpx.Response(200)
+
+    mock_transport(handler)
+
+    results = await checker.check_all(urls, max_concurrent=2)
+
+    assert len(results) == len(urls)
+    assert peak_requests <= 2
+    assert peak_requests == 2
+
+@pytest.mark.parametrize("value", [0, -1, "2", 1.5, True])
+async def test_check_all_rejects_invalid_max_concurrent(checker, value):
+    with pytest.raises(ValueError, match="positive integer"):
+        await checker.check_all([], max_concurrent=value)

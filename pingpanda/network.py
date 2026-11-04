@@ -14,6 +14,7 @@ from tqdm import tqdm
 from pingpanda.models import UrlResult
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
+DEFAULT_MAX_CONCURRENT = 10
 
 
 # Function to resolve hostname to IP:Port
@@ -76,12 +77,24 @@ async def check_url_status(session, url_id, url):
     )
 
 
-async def check_all(urls, initial_results=None, on_result=None):
-    """Check unfinished URLs and optionally persist each newly completed result.
+async def check_all(
+    urls,
+    initial_results=None,
+    on_result=None,
+    max_concurrent=DEFAULT_MAX_CONCURRENT,
+):
+    """Check unfinished URLs with bounded concurrency.
 
-    URL IDs always refer to the original input order. Existing checkpoint results
-    are retained and are not requested again.
+    URL IDs always refer to the original input order. Existing checkpoint
+    results are retained and are not requested again.
     """
+    if (
+        isinstance(max_concurrent, bool)
+        or not isinstance(max_concurrent, int)
+        or max_concurrent <= 0
+    ):
+        raise ValueError("max_concurrent must be a positive integer")
+
     urls = list(urls)
     results = dict(initial_results or {})
 
@@ -100,8 +113,12 @@ async def check_all(urls, initial_results=None, on_result=None):
         for url_id, url in enumerate(urls)
         if url_id not in results
     ]
+
     if not pending:
         return dict(sorted(results.items()))
+
+    url_iterator = iter(pending)
+    worker_count = min(max_concurrent, len(pending))
 
     progress = tqdm(
         total=len(urls),
@@ -110,26 +127,43 @@ async def check_all(urls, initial_results=None, on_result=None):
     ) if len(urls) > 1 else None
 
     tasks = []
+
     try:
         async with httpx.AsyncClient() as session:
+
+            async def worker():
+                while True:
+                    item = next(url_iterator, None)
+                    if item is None:
+                        return
+
+                    url_id, url = item
+                    result = await check_url_status(session, url_id, url)
+                    results[result.url_id] = result
+
+                    if on_result is not None:
+                        on_result(dict(results))
+
+                    if progress is not None:
+                        progress.update(1)
+
             tasks = [
-                asyncio.create_task(check_url_status(session, url_id, url))
-                for url_id, url in pending
+                asyncio.create_task(worker())
+                for _ in range(worker_count)
             ]
-            for completed_task in asyncio.as_completed(tasks):
-                result = await completed_task
-                results[result.url_id] = result
-                if on_result is not None:
-                    on_result(dict(results))
-                if progress is not None:
-                    progress.update(1)
+
+            await asyncio.gather(*tasks)
+
     except BaseException:
         for task in tasks:
             if not task.done():
                 task.cancel()
+
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
         raise
+
     finally:
         if progress is not None:
             progress.close()

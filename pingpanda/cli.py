@@ -7,7 +7,7 @@ import sys
 
 from pingpanda.checkpoint import CheckpointError, load_checkpoint, save_checkpoint
 from pingpanda.constants import BANNER
-from pingpanda.network import check_all
+from pingpanda.network import check_all, DEFAULT_MAX_CONCURRENT
 from pingpanda.report import classify_results, render_report, save_report
 
 DEFAULT_CHECKPOINT = ".pingpanda-checkpoint.json"
@@ -23,6 +23,16 @@ def make_output_safe():
         except (ValueError, OSError):
             pass
 
+def positive_int(value):
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer")
+
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+
+    return number
 
 def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description="URL Status Checker")
@@ -42,6 +52,12 @@ def parse_arguments(argv=None):
     )
     parser.add_argument("-v", "--version", action="store_true", help="Display version information")
     parser.add_argument("-update", action="store_true", help="Update the tool")
+    parser.add_argument(
+    "--max-concurrent",
+    type=positive_int,
+    default=DEFAULT_MAX_CONCURRENT,
+    help="Maximum number of URLs to check concurrently (default: 10)",
+)
     return parser.parse_args(argv)
 
 
@@ -93,13 +109,13 @@ async def main(argv=None):
             urls,
             initial_results=initial_results,
             on_result=persist_progress,
+            max_concurrent=args.max_concurrent,
         )
         # Also create a checkpoint for an empty or already-complete resumed scan.
         save_checkpoint(args.checkpoint, urls, results)
     except CheckpointError as exc:
         print(f"Checkpoint error: {exc}", file=sys.stderr)
         return
-
     status_codes = classify_results(results)
     render_report(status_codes)
 

@@ -83,3 +83,20 @@ async def test_one_broken_url_does_not_stop_the_batch(
     out = capsys.readouterr().out
     assert "https://good.test/" in out
     assert "https://loop.test/loop" in out
+
+def test_max_concurrent_argument_is_parsed(checker):
+    args = checker.parse_arguments(["--max-concurrent", "4"])
+
+    assert args.max_concurrent == 4
+
+
+def test_max_concurrent_has_default(checker):
+    args = checker.parse_arguments([])
+
+    assert args.max_concurrent == 10
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "abc"])
+def test_invalid_max_concurrent_is_rejected(checker, value):
+    with pytest.raises(SystemExit):
+        checker.parse_arguments(["--max-concurrent", value])
